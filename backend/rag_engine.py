@@ -1,21 +1,42 @@
 
+import os
+
 import faiss
-from sentence_transformers import SentenceTransformer
+import numpy as np
+from dotenv import load_dotenv
+from google import genai
+
+load_dotenv()
+
+API_KEY = os.getenv("GEMINI_API_KEY")
+
+if not API_KEY:
+    raise RuntimeError("GEMINI_API_KEY is missing.")
+
+client = genai.Client(api_key=API_KEY)
+EMBEDDING_MODEL = "gemini-embedding-001"
 
 
-# Downloaded on first use; cached for later runs.
-_embedding_model = None
+def embed_texts(texts: list[str]) -> np.ndarray:
+    """Create normalized embeddings using Gemini, in small batches."""
+    all_embeddings = []
 
+    for start in range(0, len(texts), 16):
+        batch = texts[start:start + 16]
 
-def get_embedding_model():
-    global _embedding_model
-
-    if _embedding_model is None:
-        _embedding_model = SentenceTransformer(
-            "sentence-transformers/all-MiniLM-L6-v2"
+        response = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=batch,
         )
 
-    return _embedding_model
+        all_embeddings.extend(
+            embedding.values for embedding in response.embeddings
+        )
+
+    embeddings = np.asarray(all_embeddings, dtype="float32")
+    faiss.normalize_L2(embeddings)
+
+    return embeddings
 
 
 def chunk_pages(
@@ -54,21 +75,12 @@ def chunk_pages(
 def build_search_index(
     chunks: list[dict],
 ) -> tuple[faiss.IndexFlatIP | None, list[dict]]:
-    """Build a FAISS index using normalized text embeddings."""
+    """Build a FAISS index using Gemini text embeddings."""
     if not chunks:
         return None, []
 
-    model = get_embedding_model()
     texts = [chunk["text"] for chunk in chunks]
-
-    embeddings = model.encode(
-        texts,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
-
-    embeddings = embeddings.astype("float32")
+    embeddings = embed_texts(texts)
 
     index = faiss.IndexFlatIP(embeddings.shape[1])
     index.add(embeddings)
@@ -82,18 +94,11 @@ def search_chunks(
     chunks: list[dict],
     top_k: int = 4,
 ) -> list[dict]:
-    """Retrieve the most relevant text chunks for a question."""
+    """Retrieve the most relevant document chunks."""
     if not question.strip() or index is None or not chunks:
         return []
 
-    model = get_embedding_model()
-
-    query_embedding = model.encode(
-        [question],
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    ).astype("float32")
+    query_embedding = embed_texts([question])
 
     k = min(top_k, len(chunks))
     scores, indices = index.search(query_embedding, k)
