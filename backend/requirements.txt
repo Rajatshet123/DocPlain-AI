@@ -3,10 +3,7 @@ fastapi
 uvicorn[standard]
 python-dotenv
 google-genai
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.6.0+cpu
-transformers==4.48.3
-sentence-transformers==3.4.1
+numpy
 faiss-cpu
 pypdf
 python-multipart
